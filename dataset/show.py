@@ -1,97 +1,74 @@
 # RA, 2020-04-06
 
-# Visualize recodings
+# Visualize recordings
 
-import re
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from more_itertools import first
+import matplotlib.pyplot as plt
+from scipy.signal import spectrogram
+import sounddevice as sd
 
 PARAM = {
 	'samples path': Path(__file__).parent / "records/raw",
+
+	# Preferred dtype for audio arrays
+	'dtype': 'int16',
 }
 
 samples = pd.DataFrame(
 	data=[
-		(str(f), first(f.name.split('.')), first(f.suffixes)[1:])
-		for f in PARAM['samples path'].glob("*.zip")
+		(str(f), f.stem, f.parent.name)
+		for f in PARAM['samples path'].glob("*/*.zip")
 	],
-	columns=["file", "id", "type"],
-).pivot_table(
-	values="file", index="id", columns="type",
-	aggfunc=(lambda df: df.squeeze())
-)
+	columns=["file", "id", "label"],
+).set_index("id", verify_integrity=True)
 
-# Select one sample
-row = samples.iloc[1]
+# Hear/see one sample
+print(samples)
 
-audio = pd.read_csv(row['audio'], sep='\t', index_col="s")
-mouse = pd.read_csv(row['mouse'], sep='\t', index_col="s")
+while True:
+	print()
+	i = input("Which sample would you like to see/hear? ")
+	try:
+		sample = samples.loc[i]
+	except:
+		continue
+		# sample = samples.sample(1).squeeze()
 
-# Frames per second (framerate)
-fps = int(1 / np.mean(np.diff(audio.index)))
-
-from scipy.interpolate import interp1d
-# from scipy.stats import gaussian_kde
-# gaussian_kde()
-mouse = pd.DataFrame(
-	data=interp1d(x=mouse.index, y=mouse.T)(audio.index).T,
-	index=audio.index,
-	columns=mouse.columns
-).diff().rolling(round(0.1 * fps)).mean()
-
-mouse = mouse.drop(columns='y')
-
-# import matplotlib.pyplot as plt
-# fig: plt.Figure
-# ax1: plt.Axes
-# ax2: plt.Axes
-# (fig, ax1) = plt.subplots()
-# ax2 = ax1.twinx()
-# # ax2.plot(audio.index, audio.to_numpy(), c="C3")
-# print()
-# ax1.specgram(audio.to_numpy().squeeze(), Fs=fps, mode="psd")
-# ax2.plot(mouse.index, mouse.to_numpy())
-# plt.show()
-# exit()
+	print("Sample:")
+	print(pd.DataFrame(sample).T.to_markdown())
 
 
-from scipy.signal import spectrogram
-(ff, tt, sg) = spectrogram(audio.to_numpy().squeeze(), fs=fps, nperseg=int(0.1 * fps), mode='psd')
-ff_ok = (10 < ff) & (ff < 2000)
-sg = sg[ff_ok, :]
-# print(ff.shape, tt.shape, sg.shape)
-# print(tt)
-y = pd.DataFrame(index=list(tt), data=interp1d(x=mouse.index, y=mouse.T)(tt).T)
-X = pd.DataFrame(index=list(tt), data=sg.T, columns=ff[ff_ok])
-y = y.dropna()
-X = X.loc[y.index]
+	# Load the audio
+	audio = pd.read_csv(sample['file'], sep='\t', index_col='s')
 
-ii_train = y.index[np.random.choice([True, False], size=len(y.index))]
-ii_valid = y.index.difference(ii_train)
+	# Frames per second (framerate)
+	fps = int(np.round(np.mean(1 / np.diff(audio.index))))
 
-from sklearn.linear_model import Lasso as Regressor
-model = Regressor(alpha=1e-3, fit_intercept=True, normalize=False).fit(X=X.loc[ii_train], y=y.loc[ii_train])
-z = pd.DataFrame(index=X.index, data=model.predict(X))
+	# Hit 'em with the graph
 
+	fig: plt.Figure
+	ax1: plt.Axes
+	ax2: plt.Axes
+	(fig, ax1) = plt.subplots()
 
-import matplotlib.pyplot as plt
-fig: plt.Figure
-ax1: plt.Axes
-ax2: plt.Axes
-(fig, ax1) = plt.subplots()
-ax2 = ax1.twinx()
-# ax2.plot(audio.index, audio.to_numpy(), c="C3")
-# ax1.plot(y.loc[ii_valid], c="C1")
-# ax2.plot(z.loc[ii_valid], c="C2")
-ax1.scatter(y.loc[ii_train], z.loc[ii_train])
-ax1.scatter(y.loc[ii_valid], z.loc[ii_valid])
-ax1.grid()
-plt.show()
+	fig.suptitle(F"ID: {sample.name}, class label: '{sample.label}'")
 
-# import matplotlib.pyplot as plt
-# plt.plot(y.rolling(30).corr(z))
-# plt.plot(y.rolling(50).corr(z))
-# plt.plot(y.rolling(70).corr(z))
-# plt.show()
+	ax1.specgram(x=audio.squeeze(), Fs=fps, mode="psd")
+	ax1.set_xlabel("Time (seconds)")
+	ax1.set_ylabel("Frequency (Hz)")
+
+	(ff, tt, spectrum) = spectrogram(audio.squeeze(), fs=fps, nperseg=int(0.05 * fps), mode='psd')
+	freq_cutoff = 400
+	spectrum = spectrum[(freq_cutoff <= ff), :]
+	ax2 = ax1.twinx()
+	ax2.plot(tt, np.sum(spectrum, axis=0), c="white")
+	ax2.set_ylabel(F"Power above {freq_cutoff} Hz")
+	ax2.set_yticks([])
+
+	sd.wait()
+	sd.play(audio.to_numpy(dtype=PARAM['dtype']), samplerate=fps)
+
+	plt.show()
+
