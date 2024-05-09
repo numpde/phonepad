@@ -1,5 +1,8 @@
 # phonepad
 
+## About 
+
+The idea was to train an audio classifier to recognize finger movement on the laptop chassis, specifically for inputting digits. It worked halfway.
 
 ## References
 
